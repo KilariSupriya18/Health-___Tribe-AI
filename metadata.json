@@ -1,0 +1,6 @@
+{
+  "name": "HealthTribe AI",
+  "description": "An premium AI-powered healthcare ecosystem for symptom triage, doctor scheduling, and family health coordination.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

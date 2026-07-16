@@ -1,0 +1,121 @@
+                      <h3 className="font-extrabold text-sm text-slate-900 dark:text-white mb-4">Active Consultation Bookings</h3>
+                      
+                      {/* Filter Tabs */}
+                      <div className="flex gap-2 mb-4 border-b border-slate-200 dark:border-slate-700">
+                        {(["Upcoming", "Completed", "Cancelled"] as const).map(status => {
+                          const count = appointments.filter(a => a.status === status).length;
+                          return (
+                            <button
+                              key={status}
+                              onClick={() => setAppointmentFilter(status)}
+                              className={`pb-2 text-xs font-bold border-b-2 transition-all ${
+                                appointmentFilter === status
+                                  ? "border-emerald-600 text-emerald-700"
+                                  : "border-transparent text-slate-500 hover:text-slate-700"
+                              }`}
+                            <motion.div layout className="space-y-4">
+                        {(() => {
+                          const filteredAppointments = appointments.filter(a => a.status === appointmentFilter);
+                          const INITIAL_VISIBLE_APPOINTMENTS = 2;
+                          
+                          if (filteredAppointments.length === 0) {
+                            return <p className="text-xs text-slate-400 py-4 text-center">No {appointmentFilter.toLowerCase()} appointments.</p>;
+                          }
+                          
+                          const visibleAppointments = showAllAppointments 
+                            ? filteredAppointments 
+                            : filteredAppointments.slice(0, INITIAL_VISIBLE_APPOINTMENTS);
+                            
+                          return (
+                            <>
+                              <AnimatePresence>
+                                {visibleAppointments.map((appt) => (
+                                  <motion.div 
+                                    layout
+                                    initial={{ opacity: 0, height: 0, scale: 0.95 }}
+                                    animate={{ opacity: 1, height: "auto", scale: 1 }}
+                                    exit={{ opacity: 0, height: 0, scale: 0.95 }}
+                                    transition={{ duration: 0.2 }}
+                                    key={appt.id} 
+                                    className="p-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-800 rounded-2xl space-y-3 origin-top"
+                                  >
+                                    <div className="flex justify-between items-center">
+                                      <span className="font-bold text-xs text-slate-900 dark:text-white">{appt.doctorName}</span>
+                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                                        appt.status === "Upcoming" ? "bg-emerald-100 text-emerald-800" :
+                                        appt.status === "Completed" ? "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300" :
+                                        "bg-rose-100 text-rose-800"
+                                      }`}>
+                                        {appt.status}
+                                      </span>
+                                    </div>
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">{appt.specialty} • Patient: {appt.patientName}</p>
+                                    
+                                    <div className="flex justify-between text-[11px] font-medium text-slate-600 dark:text-slate-400">
+                                      <span>📅 {appt.date}</span>
+                                      <span>⏰ {appt.time}</span>
+                                    </div>
+                                    {appt.status === "Upcoming" && (
+                                      <div className="flex gap-2 pt-2 border-t border-slate-200/60">
+                                        <button
+                                          onClick={() => appt.type === "Video" ? startVideoCall(doctors[0]) : startVideoCall(doctors[0])}
+                                          className="flex-1 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-[10px] rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1"
+                                        >
+                                          <Video className="w-3 h-3" /> Connect Video
+                                        </button>
+                                        <button
+                                          onClick={() => handleReschedule(appt.id)}
+                                          className="px-2 py-1.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-700 dark:text-slate-300 font-bold text-[10px] rounded-xl cursor-pointer"
+                                        >
+                                          Reschedule
+                                        </button>
+                                        <button
+                                          onClick={() => handleCancelAppointment(appt.id)}
+                                          className="px-2 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold text-[10px] rounded-xl cursor-pointer"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    )}
+                                  </motion.div>
+                                ))}
+                              </AnimatePresence>
+                              {filteredAppointments.length > INITIAL_VISIBLE_APPOINTMENTS && (
+                                <div className="pt-2">
+                                  <button
+                                    onClick={() => setShowAllAppointments(!showAllAppointments)}
+                                    className="w-full flex items-center justify-center gap-2 px-6 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-extrabold text-xs rounded-xl transition-all cursor-pointer border border-slate-200 dark:border-slate-700 shadow-sm"
+                                  >
+                                    {showAllAppointments ? (
+                                      "Show Less ▲"
+                                    ) : (
+                                      `Show ${filteredAppointments.length - INITIAL_VISIBLE_APPOINTMENTS} More Appointments ▼`
+                                    )}
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </motion.div>    </button>
+                                </div>
+                              )}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Nearby Emergency Hospitals */}
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200/80 rounded-2xl p-6">
+                      <h3 className="font-extrabold text-sm text-slate-900 dark:text-white mb-4">Nearby Emergency Trauma Centers</h3>
+                      <div className="space-y-3">
+                        {hospitals.map((hosp) => (
+                          <div key={hosp.id} className="p-3 bg-rose-50/40 border border-rose-100/60 rounded-xl space-y-2">
+                            <div className="flex justify-between">
+                              <h4 className="font-bold text-xs text-rose-950">{hosp.name}</h4>
+                              <span className="text-[10px] font-bold text-rose-800 bg-rose-100 px-1.5 py-0.5 rounded">SOS Active</span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400">{hosp.address} • {hosp.distance}</p>
+                            <div className="flex justify-between items-center text-[10px] text-emerald-800 font-bold">
+                              <span>✓ ABHA / Ayushman Bharat Accepted</span>
