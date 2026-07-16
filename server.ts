@@ -4,6 +4,7 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { aiService } from "./server/ai/AIService";
 import { PromptBuilder } from "./server/ai/PromptBuilder";
+import { AsyncLocalStorage } from "async_hooks";
 
 import dotenv from "dotenv";
 dotenv.config();
@@ -11,7 +12,15 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
+export const dbStorage = new AsyncLocalStorage<{ req: express.Request }>();
+
 app.use(express.json({ limit: "50mb" }));
+
+app.use((req, res, next) => {
+  dbStorage.run({ req }, () => {
+    next();
+  });
+});
 
 
 // ---------------------------------------------------------
@@ -412,7 +421,7 @@ interface FamilyMember {
 }
 
 // STATE STORAGE
-let db: {
+let base_db: {
   appointments: any[];
   familyMembers: FamilyMember[];
   medicalTimeline: any[];
@@ -749,6 +758,138 @@ let db: {
     selectedLanguage: "English"
   }
 };
+
+// User-specific persistent storage configuration
+const USER_DATA_DIR = path.join(process.cwd(), "data", "users");
+if (!fs.existsSync(USER_DATA_DIR)) {
+  fs.mkdirSync(USER_DATA_DIR, { recursive: true });
+}
+
+function getUserDb(req: express.Request): any {
+  const email = req.headers["x-user-email"] as string;
+  if (!email) {
+    return base_db; // Fallback to pre-seeded db
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  
+  // Detect demo emails
+  const isDemoEmail = ["supriya@gmail.com", "father@gmail.com", "mother@gmail.com", "doctor@healthtribe.com"].includes(cleanEmail);
+  if (isDemoEmail) {
+    return base_db;
+  }
+
+  const sanitizedEmail = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
+  const filePath = path.join(USER_DATA_DIR, `${sanitizedEmail}.json`);
+
+  if (fs.existsSync(filePath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      // Safeguard essential arrays and properties
+      if (!data.doctors) data.doctors = SEEDED_DOCTORS;
+      if (!data.aiConversations) data.aiConversations = [];
+      if (!data.appointments) data.appointments = [];
+      if (!data.familyMembers) data.familyMembers = [];
+      if (!data.medicalTimeline) data.medicalTimeline = [];
+      if (!data.medicineOrders) data.medicineOrders = [];
+      if (!data.labBookings) data.labBookings = [];
+      if (!data.abhaIdentities) data.abhaIdentities = [];
+      if (!data.consentRecords) data.consentRecords = [];
+      if (!data.importSessions) data.importSessions = [];
+      if (!data.importedHealthRecords) data.importedHealthRecords = [];
+      if (!data.supportChats) data.supportChats = [];
+      if (!data.triageConversations) data.triageConversations = [];
+      if (!data.triageMessages) data.triageMessages = [];
+      if (!data.auditLogs) data.auditLogs = [];
+      if (!data.settings) data.settings = { ...base_db.settings };
+      return data;
+    } catch (e) {
+      console.error("Error reading user DB file, regenerating:", e);
+    }
+  }
+
+  // Generate a brand new empty database for this specific user
+  const emptyDb = {
+    appointments: [],
+    familyMembers: [], // Empty profile, onboarding flow will populate the first entry
+    medicalTimeline: [],
+    medicineOrders: [],
+    labBookings: [],
+    abhaIdentities: [],
+    consentRecords: [],
+    importSessions: [],
+    importedHealthRecords: [],
+    supportChats: [
+      { sender: "ai", text: "Hello! I am your HealthTribe AI Copilot. Describe any symptoms, check drug interactions, or get dietary recommendations. How are you feeling today?", timestamp: new Date().toISOString() }
+    ],
+    triageConversations: [],
+    triageMessages: [],
+    auditLogs: [
+      { id: `log-init-${Date.now()}`, action: "Profile Created", timestamp: new Date().toISOString(), user: cleanEmail, ip: "127.0.0.1", details: `HealthTribe persistent profile initialized for ${cleanEmail}.` }
+    ],
+    settings: {
+      notificationsEnabled: true,
+      emailAlerts: true,
+      smsAlerts: true,
+      caregiverMode: true,
+      governmentBenefitsScreening: true,
+      selectedLanguage: "English"
+    },
+    aiConversations: [],
+    doctors: SEEDED_DOCTORS
+  };
+
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(emptyDb, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Failed to write initial user database:", err);
+  }
+  return emptyDb;
+}
+
+function saveUserDb(req: express.Request, userDb: any) {
+  const email = req.headers["x-user-email"] as string;
+  if (!email) return;
+
+  const cleanEmail = email.trim().toLowerCase();
+  const isDemoEmail = ["supriya@gmail.com", "father@gmail.com", "mother@gmail.com", "doctor@healthtribe.com"].includes(cleanEmail);
+  if (isDemoEmail) {
+    return; // Do not overwrite static memory for demo logins
+  }
+
+  const sanitizedEmail = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
+  const filePath = path.join(USER_DATA_DIR, `${sanitizedEmail}.json`);
+
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(userDb, null, 2), "utf-8");
+  } catch (e) {
+    console.error("Error saving user database file:", e);
+  }
+}
+
+// Global db proxy that swaps on demand based on request headers
+export const db = new Proxy(base_db as any, {
+  get(target, prop, receiver) {
+    const store = dbStorage.getStore();
+    if (store && store.req) {
+      const userDb = getUserDb(store.req);
+      return Reflect.get(userDb, prop, receiver);
+    }
+    return Reflect.get(target, prop, receiver);
+  },
+  set(target, prop, value, receiver) {
+    const store = dbStorage.getStore();
+    if (store && store.req) {
+      const userDb = getUserDb(store.req);
+      const success = Reflect.set(userDb, prop, value, receiver);
+      if (success) {
+        saveUserDb(store.req, userDb);
+      }
+      return success;
+    }
+    return Reflect.set(target, prop, value, receiver);
+  }
+});
 
 // Log helper
 function addLog(action: string, user: string, details: string) {

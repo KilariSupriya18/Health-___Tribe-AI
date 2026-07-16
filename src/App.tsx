@@ -123,6 +123,23 @@ import { AICopilotWorkspace } from "./components/AICopilotWorkspace";
 import { HealthHistoryTimeline } from "./components/HealthHistoryTimeline";
 import { ABHAGateway } from "./components/ABHAGateway";
 
+// Custom local fetch wrapper to append the active user session email in the headers
+const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  const email = typeof window !== "undefined" ? localStorage.getItem("healthtribe_logged_in_email") || "" : "";
+  if (email && typeof input === "string" && input.startsWith("/api/")) {
+    init = init || {};
+    init.headers = init.headers || {};
+    if (init.headers instanceof Headers) {
+      init.headers.set("x-user-email", email);
+    } else if (Array.isArray(init.headers)) {
+      init.headers.push(["x-user-email", email]);
+    } else {
+      (init.headers as any)["x-user-email"] = email;
+    }
+  }
+  return window.fetch(input, init);
+};
+
 const SpecialtyIcon = ({ iconName, className }: { iconName: string; className?: string }) => {
   switch (iconName) {
     case "Stethoscope":
@@ -275,15 +292,39 @@ export default function App() {
   const [loginEmailInput, setLoginEmailInput] = useState<string>("");
   const [isProfileDrawerOpen, setIsProfileDrawerOpen] = useState<boolean>(false);
 
-  // Onboarding States for Google Sign-In
+  // Onboarding States for Google Sign-In & Multi-Step Wizard
   const [isOnboardingActive, setIsOnboardingActive] = useState<boolean>(false);
   const [googleAuthLoading, setGoogleAuthLoading] = useState<boolean>(false);
-  const [onboardingForm, setOnboardingForm] = useState({
+  const [showGoogleChooser, setShowGoogleChooser] = useState<boolean>(false);
+  const [googleChooserCustomEmail, setGoogleChooserCustomEmail] = useState<string>("");
+  const [showCustomEmailInput, setShowCustomEmailInput] = useState<boolean>(false);
+  const [onboardingStep, setOnboardingStep] = useState<number>(1);
+  const [onboardingData, setOnboardingData] = useState({
+    // Step 2: Personal Info
     fullName: "",
-    age: "",
+    dob: "",
+    gender: "Female",
+    phoneNumber: "",
+    bloodGroup: "O+",
+    preferredLanguage: "English",
+    emergencyContact: "",
+    
+    // Step 3: Medical Info
     height: "",
     weight: "",
-    phoneNumber: ""
+    allergies: "",
+    chronicConditions: "",
+    currentMedications: "",
+    existingDiagnoses: "",
+    
+    // Step 4: Healthcare Prefs
+    preferredHospital: "AIMS Super Speciality Hospital",
+    preferredDoctor: "",
+    notificationPrefEmail: true,
+    notificationPrefSms: true,
+    notificationPrefPush: false,
+    defaultLanguage: "English",
+    themePreference: "Light"
   });
 
   // Form states for profile editing inside the drawer
@@ -312,31 +353,21 @@ export default function App() {
   useEffect(() => {
     if (familyMembers.length > 0 && loggedInEmail) {
       const email = loggedInEmail.toLowerCase();
-      if (email === "kilarisupriya25@gmail.com") {
-        const found = familyMembers.find(f => f.email?.toLowerCase() === "kilarisupriya25@gmail.com") || familyMembers.find(f => f.id === "fam-self");
-        if (found) setSelectedMember(found);
-      } else if (email === "supriya@gmail.com" || email === "supriya@example.com") {
-        const found = familyMembers.find(f => f.id === "fam-self");
-        if (found) setSelectedMember(found);
-      } else if (email === "rami@gmail.com" || email === "father@gmail.com") {
-        const found = familyMembers.find(f => f.id === "fam-1");
-        if (found) setSelectedMember(found);
-      } else if (email === "lakshmi@gmail.com" || email === "mother@gmail.com") {
-        const found = familyMembers.find(f => f.id === "fam-2");
-        if (found) setSelectedMember(found);
-      } else if (email === "karthik@gmail.com" || email === "brother@gmail.com") {
-        const found = familyMembers.find(f => f.id === "fam-3");
-        if (found) setSelectedMember(found);
-      } else {
-        const userName = email.split("@")[0];
-        const formattedName = userName.charAt(0).toUpperCase() + userName.slice(1);
-        const found = familyMembers.find(f => f.name.toLowerCase() === formattedName.toLowerCase());
-        if (found) setSelectedMember(found);
+      // If it's a doctor, sessionMode should stay doctor
+      if (email.includes("doctor")) {
+        setSessionMode("doctor");
+        return;
+      }
+      
+      // Auto-select the "Self" member for standard users
+      const selfMember = familyMembers.find(f => f.relation === "Self") || familyMembers[0];
+      if (selfMember) {
+        setSelectedMember(selfMember);
       }
     }
   }, [familyMembers, loggedInEmail]);
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!loginEmailInput || !loginEmailInput.includes("@")) {
       triggerToast("Please enter a valid email address.", true);
@@ -344,151 +375,187 @@ export default function App() {
     }
 
     const email = loginEmailInput.trim().toLowerCase();
-    setLoggedInEmail(email);
-    setIsLoggedIn(true);
-    localStorage.setItem("healthtribe_is_logged_in", "true");
-    localStorage.setItem("healthtribe_logged_in_email", email);
+    setLoading(true);
 
-    // Dynamic routing/profiling based on email
-    if (email.includes("doctor")) {
-      setSessionMode("doctor");
-      triggerToast("Welcome back, Dr. Arjun Patel! Doctor View activated.");
-    } else {
-      setSessionMode("patient");
-      // Map common emails to existing profiles, or set a dynamic profile
-      if (email === "supriya@gmail.com" || email === "supriya@example.com") {
-        const found = familyMembers.find(f => f.id === "fam-self");
-        if (found) setSelectedMember(found);
-        triggerToast("Welcome back, Supriya Kilari!");
-      } else if (email === "rami@gmail.com" || email === "father@gmail.com") {
-        const found = familyMembers.find(f => f.id === "fam-1");
-        if (found) setSelectedMember(found);
-        triggerToast("Welcome back, Rami Kilari!");
-      } else if (email === "lakshmi@gmail.com" || email === "mother@gmail.com") {
-        const found = familyMembers.find(f => f.id === "fam-2");
-        if (found) setSelectedMember(found);
-        triggerToast("Welcome back, Lakshmi Kilari!");
-      } else if (email === "karthik@gmail.com" || email === "brother@gmail.com") {
-        const found = familyMembers.find(f => f.id === "fam-3");
-        if (found) setSelectedMember(found);
-        triggerToast("Welcome back, Karthik Kilari!");
-      } else {
-        // Create/retrieve dynamic profile for any other email
-        const userName = email.split("@")[0];
-        const formattedName = userName.charAt(0).toUpperCase() + userName.slice(1);
-        const existingDynamic = familyMembers.find(f => f.name.toLowerCase() === formattedName.toLowerCase());
-        
-        if (existingDynamic) {
-          setSelectedMember(existingDynamic);
-          triggerToast(`Welcome back, ${existingDynamic.name}!`);
-        } else {
-          // Add a new dynamic family member
-          const newMember: FamilyMember = {
-            id: `fam-${Date.now()}`,
-            name: formattedName,
-            relation: "Self",
-            age: 30,
-            gender: "Male",
-            bloodGroup: "B+",
-            allergies: "None",
-            chronicConditions: "None",
-            medications: "None"
-          };
-          
-          fetch("/api/family", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(newMember)
-          }).then(() => {
-            setFamilyMembers(prev => [...prev, newMember]);
-            setSelectedMember(newMember);
-          });
-          
-          triggerToast(`Welcome to HealthTribe AI, ${formattedName}! Created new clinical profile.`);
-        }
+    try {
+      // Temporarily store email for fetch headers
+      localStorage.setItem("healthtribe_logged_in_email", email);
+
+      // 1. Doctor account handling
+      if (email.includes("doctor")) {
+        setLoggedInEmail(email);
+        setIsLoggedIn(true);
+        setSessionMode("doctor");
+        localStorage.setItem("healthtribe_is_logged_in", "true");
+        localStorage.setItem("healthtribe_logged_in_email", email);
+        localStorage.setItem("healthtribe_session_mode", "doctor");
+        triggerToast("Welcome back, Dr. Arjun Patel! Doctor Portal active.");
+        setLoading(false);
+        return;
       }
+
+      // 2. Patient account handling: check backend for clinical profile existence
+      const res = await fetch("/api/family");
+      if (!res.ok) {
+        throw new Error("Core health service responded with an error");
+      }
+
+      const data = await res.json();
+      const members: FamilyMember[] = data.familyMembers || [];
+      const selfMember = members.find(m => m.relation === "Self");
+
+      if (selfMember) {
+        // Returning User - skip onboarding, log in immediately!
+        setLoggedInEmail(email);
+        setIsLoggedIn(true);
+        setSessionMode("patient");
+        localStorage.setItem("healthtribe_is_logged_in", "true");
+        localStorage.setItem("healthtribe_logged_in_email", email);
+        localStorage.setItem("healthtribe_session_mode", "patient");
+        
+        setFamilyMembers(members);
+        setSelectedMember(selfMember);
+        triggerToast(`Welcome back, ${selfMember.name}!`);
+      } else {
+        // New User - start interactive 5-step onboarding wizard
+        const derivedName = email.split("@")[0];
+        const capitalizedName = derivedName.charAt(0).toUpperCase() + derivedName.slice(1);
+        
+        setOnboardingData(prev => ({
+          ...prev,
+          fullName: capitalizedName,
+          phoneNumber: ""
+        }));
+        setOnboardingStep(1);
+        setIsOnboardingActive(true);
+        triggerToast("Login verified! Let's build your HealthTribe clinical profile.");
+      }
+    } catch (err) {
+      console.error("Login handshake failed:", err);
+      triggerToast("Secure Sign-In failed. Please try again.", true);
+      localStorage.removeItem("healthtribe_logged_in_email");
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleGoogleSignIn = () => {
+    setShowGoogleChooser(true);
+  };
+
+  const selectGoogleAccount = async (email: string, displayName: string) => {
     setGoogleAuthLoading(true);
-    setTimeout(() => {
-      setGoogleAuthLoading(false);
-      const email = "kilarisupriya25@gmail.com";
-      const isComplete = localStorage.getItem("healthtribe_onboarding_complete_kilarisupriya25@gmail.com") === "true";
-      
-      if (isComplete) {
-        setLoggedInEmail(email);
-        setIsLoggedIn(true);
-        localStorage.setItem("healthtribe_is_logged_in", "true");
-        localStorage.setItem("healthtribe_logged_in_email", email);
+    setShowGoogleChooser(false);
+    
+    setTimeout(async () => {
+      try {
+        const cleanEmail = email.trim().toLowerCase();
         
-        // Find existing family member matching this email
-        const found = familyMembers.find(f => f.email?.toLowerCase() === email) || familyMembers.find(f => f.id === "fam-self");
-        if (found) {
-          setSelectedMember(found);
+        // Temporarily write the logged in email so the fetch interceptor includes it
+        localStorage.setItem("healthtribe_logged_in_email", cleanEmail);
+        
+        // Doctor account detection
+        if (cleanEmail.includes("doctor")) {
+          setLoggedInEmail(cleanEmail);
+          setIsLoggedIn(true);
+          setSessionMode("doctor");
+          localStorage.setItem("healthtribe_is_logged_in", "true");
+          localStorage.setItem("healthtribe_logged_in_email", cleanEmail);
+          localStorage.setItem("healthtribe_session_mode", "doctor");
+          triggerToast(`Google Sign-In successful. Welcome back, Dr. Arjun Patel!`);
+          setGoogleAuthLoading(false);
+          return;
         }
-        triggerToast("Signed in with Google. Welcome back, Supriya Kilari!");
-      } else {
-        // Trigger onboarding form with pre-populated demo values
-        setOnboardingForm({
-          fullName: "Supriya Kilari",
-          age: "29",
-          height: "165",
-          weight: "58",
-          phoneNumber: "+91 94021 58210"
-        });
-        setIsOnboardingActive(true);
-        triggerToast("Google Account verified! Please complete your profile setup.");
+
+        // Standard user: check backend for completed onboarding profile
+        const res = await fetch("/api/family");
+        if (!res.ok) {
+          throw new Error("Core health service responded with an error");
+        }
+        
+        const data = await res.json();
+        const members: FamilyMember[] = data.familyMembers || [];
+        const selfMember = members.find(m => m.relation === "Self");
+
+        if (selfMember) {
+          // Returning User - restore full dashboard state immediately!
+          setLoggedInEmail(cleanEmail);
+          setIsLoggedIn(true);
+          setSessionMode("patient");
+          localStorage.setItem("healthtribe_is_logged_in", "true");
+          localStorage.setItem("healthtribe_logged_in_email", cleanEmail);
+          localStorage.setItem("healthtribe_session_mode", "patient");
+          
+          setFamilyMembers(members);
+          setSelectedMember(selfMember);
+          triggerToast(`Signed in with Google. Welcome back, ${selfMember.name}!`);
+        } else {
+          // New User - start multi-step onboarding wizard
+          setOnboardingData(prev => ({
+            ...prev,
+            fullName: displayName || "",
+            phoneNumber: ""
+          }));
+          setOnboardingStep(1);
+          setIsOnboardingActive(true);
+          triggerToast("Google Account verified! Let's establish your unified medical profile.");
+        }
+      } catch (err) {
+        console.error("Authentication handshake failed:", err);
+        triggerToast("Google Sign-In failed. Core service offline.", true);
+        localStorage.removeItem("healthtribe_logged_in_email");
+      } finally {
+        setGoogleAuthLoading(false);
       }
-    }, 1200);
+    }, 1000);
   };
 
   const handleOnboardingSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const { fullName, age, height, weight, phoneNumber } = onboardingForm;
     
-    // Validate required fields
-    if (!fullName.trim()) {
+    const email = localStorage.getItem("healthtribe_logged_in_email") || "kilarisupriya25@gmail.com";
+    
+    // Final Step validation
+    if (!onboardingData.fullName.trim()) {
       triggerToast("Please enter your Full Name.", true);
       return;
     }
-    const ageVal = parseInt(age);
-    if (!age || isNaN(ageVal) || ageVal <= 0) {
-      triggerToast("Please enter a valid positive Age.", true);
+    if (!onboardingData.dob) {
+      triggerToast("Please enter your Date of Birth.", true);
       return;
     }
-    const heightVal = parseInt(height);
-    if (!height || isNaN(heightVal) || heightVal <= 0) {
-      triggerToast("Please enter a valid Height in cm.", true);
-      return;
-    }
-    const weightVal = parseInt(weight);
-    if (!weight || isNaN(weightVal) || weightVal <= 0) {
-      triggerToast("Please enter a valid Weight in kg.", true);
-      return;
-    }
-    if (!phoneNumber.trim()) {
+    if (!onboardingData.phoneNumber.trim()) {
       triggerToast("Please enter your Phone Number.", true);
       return;
     }
 
     setLoading(true);
     try {
-      // Create new dynamic family member / patient profile on backend
+      // Calculate age dynamically
+      let calculatedAge = 30;
+      if (onboardingData.dob) {
+        const birthDate = new Date(onboardingData.dob);
+        const today = new Date();
+        calculatedAge = today.getFullYear() - birthDate.getFullYear();
+        const m = today.getMonth() - birthDate.getMonth();
+        if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+          calculatedAge--;
+        }
+      }
+
       const newMember = {
-        name: fullName,
+        name: onboardingData.fullName,
         relation: "Self",
-        age: ageVal,
-        gender: "Female",
-        bloodGroup: "O+",
-        allergies: "Peanuts, Penicillin",
-        chronicConditions: "Mild Asthma",
-        medications: "Inhaler (SOS)",
-        height: `${heightVal} cm`,
-        weight: `${weightVal} kg`,
-        phone: phoneNumber,
-        email: "kilarisupriya25@gmail.com",
+        age: calculatedAge,
+        gender: onboardingData.gender,
+        bloodGroup: onboardingData.bloodGroup,
+        allergies: onboardingData.allergies || "None",
+        chronicConditions: onboardingData.chronicConditions || "None",
+        medications: onboardingData.currentMedications || "None",
+        height: onboardingData.height ? `${onboardingData.height} cm` : "Not Specified",
+        weight: onboardingData.weight ? `${onboardingData.weight} kg` : "Not Specified",
+        phone: onboardingData.phoneNumber,
+        email: email,
         onboardingComplete: true
       };
 
@@ -500,31 +567,29 @@ export default function App() {
       const data = await res.json();
       
       if (data.success) {
-        // Update local states
-        setFamilyMembers(prev => {
-          // Replace fam-self if it exists or add new
-          const filtered = prev.filter(m => m.id !== "fam-self");
-          return [...filtered, data.member];
-        });
-        setSelectedMember(data.member);
-        
-        // Save complete marker to local storage
-        localStorage.setItem("healthtribe_onboarding_complete_kilarisupriya25@gmail.com", "true");
+        // Save to persistent session
         localStorage.setItem("healthtribe_is_logged_in", "true");
-        localStorage.setItem("healthtribe_logged_in_email", "kilarisupriya25@gmail.com");
+        localStorage.setItem("healthtribe_logged_in_email", email);
+        localStorage.setItem("healthtribe_session_mode", "patient");
+        localStorage.setItem(`healthtribe_onboarding_complete_${email}`, "true");
         
-        setLoggedInEmail("kilarisupriya25@gmail.com");
+        setIsDarkMode(onboardingData.themePreference === "Dark");
+        setLoggedInEmail(email);
         setIsLoggedIn(true);
         setIsOnboardingActive(false);
         setActiveTab("home");
         
-        triggerToast(`Welcome to HealthTribe AI, ${fullName}! Your clinical profile is ready.`);
+        // Force state loading
+        setFamilyMembers([data.member]);
+        setSelectedMember(data.member);
+        
+        triggerToast(`Welcome to HealthTribe AI, ${onboardingData.fullName}! Your private account is active.`);
       } else {
-        triggerToast("Failed to save profile setup.", true);
+        triggerToast("Failed to register profile with HealthTribe core.", true);
       }
     } catch (err) {
-      console.error(err);
-      triggerToast("Failed to save onboarding setup.", true);
+      console.error("Onboarding failed:", err);
+      triggerToast("Onboarding network synchronization failed.", true);
     } finally {
       setLoading(false);
     }
@@ -886,6 +951,10 @@ export default function App() {
 
   // Fetch initial data
   const loadPlatformData = async () => {
+    if (!isLoggedIn) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const docRes = await fetch(`/api/doctors?specialty=${selectedSpecialtyId}&search=${globalSearchQuery}`);
@@ -904,9 +973,15 @@ export default function App() {
 
       const famRes = await fetch("/api/family");
       const famData = await famRes.json();
-      setFamilyMembers(famData.familyMembers || []);
-      if (famData.familyMembers && famData.familyMembers.length > 0 && !selectedMember) {
-        setSelectedMember(famData.familyMembers[0]);
+      const loadedMembers = famData.familyMembers || [];
+      setFamilyMembers(loadedMembers);
+      
+      // Select the "Self" member automatically if it exists, or the first member
+      if (loadedMembers.length > 0) {
+        const selfMember = loadedMembers.find((m: FamilyMember) => m.relation === "Self") || loadedMembers[0];
+        setSelectedMember(selfMember);
+      } else {
+        setSelectedMember(null);
       }
 
       const apptRes = await fetch("/api/appointments");
@@ -939,8 +1014,12 @@ export default function App() {
   };
 
   useEffect(() => {
-    loadPlatformData();
-  }, [selectedSpecialtyId, selectedMember?.id]);
+    if (isLoggedIn) {
+      loadPlatformData();
+    } else {
+      setLoading(false);
+    }
+  }, [isLoggedIn, selectedSpecialtyId, selectedMember?.id]);
 
   // Handle Voice / Text triage query
   const handleTriageSubmit = async (textToSend?: string) => {
@@ -1698,130 +1777,421 @@ export default function App() {
           </div>
 
           {isOnboardingActive ? (
-            <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl p-8 shadow-2xl space-y-6 text-left">
-              <div className="text-center space-y-1.5">
-                <div className="mx-auto w-12 h-12 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600">
-                  <UserCheck className="w-6 h-6" />
+            <div className="w-full max-w-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 shadow-2xl space-y-6 text-left relative overflow-hidden transition-all duration-300">
+              {/* Step indicator progress bar */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="font-extrabold uppercase tracking-widest text-emerald-600">HealthTribe Onboarding</span>
+                  <span className="text-slate-400 font-mono">Step {onboardingStep} of 5</span>
                 </div>
-                <h2 className="text-xl font-extrabold text-slate-900 dark:text-white">Create Your Profile</h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Please complete this brief first-time clinical profile setup.
-                </p>
+                <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-emerald-600 rounded-full transition-all duration-300"
+                    style={{ width: `${(onboardingStep / 5) * 100}%` }}
+                  />
+                </div>
               </div>
 
-              <form onSubmit={(e) => { e.preventDefault(); handleOnboardingSubmit(); }} className="space-y-4">
-                {/* Email Address (Read Only) */}
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
-                    Google Email Address
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      readOnly
-                      value="kilarisupriya25@gmail.com"
-                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-xs text-slate-500 dark:text-slate-400 cursor-not-allowed focus:outline-none"
-                    />
-                    <div className="absolute right-3.5 top-3.5 text-slate-400">
-                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+              {/* STEP 1: WELCOME & PLATFORM INTRODUCTION */}
+              {onboardingStep === 1 && (
+                <div className="space-y-6 animate-fade-in">
+                  <div className="space-y-2">
+                    <div className="w-14 h-14 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-2xl flex items-center justify-center shadow-md">
+                      <ShieldCheck className="w-8 h-8" />
+                    </div>
+                    <h2 className="text-2xl font-black text-slate-900 dark:text-white">Welcome to HealthTribe AI</h2>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                      Let's configure your independent electronic health profile. This will act as your decentralized, secure, and private clinical ledger on the HealthTribe care gateway network.
+                    </p>
+                  </div>
+
+                  <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200/50 dark:border-slate-800/80 space-y-3">
+                    <div className="flex items-start gap-3">
+                      <div className="p-1 bg-emerald-100 dark:bg-emerald-950/60 rounded-lg text-emerald-600 dark:text-emerald-400 mt-0.5">
+                        <ShieldCheck className="w-4.5 h-4.5" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-slate-800 dark:text-slate-200">End-to-End Cryptographic Custody</h4>
+                        <p className="text-[11px] text-slate-400 mt-0.5">Your medical timeline, vital files, and prescriptions are sealed and completely invisible to third parties.</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="p-1 bg-teal-100 dark:bg-teal-950/60 rounded-lg text-teal-600 dark:text-teal-400 mt-0.5">
+                        <Activity className="w-4.5 h-4.5" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-slate-800 dark:text-slate-200">Heuristic AI Triage Co-Pilot</h4>
+                        <p className="text-[11px] text-slate-400 mt-0.5">Instant triage analytics on sympotoms, prescription OCR analysis, and ABHA interoperability.</p>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {/* Full Name */}
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
-                    Full Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Supriya Kilari"
-                    value={onboardingForm.fullName}
-                    onChange={(e) => setOnboardingForm(prev => ({ ...prev, fullName: e.target.value }))}
-                    className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                  />
-                </div>
-
-                {/* Age */}
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
-                    Age (Years) <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    min="1"
-                    max="120"
-                    placeholder="e.g. 29"
-                    value={onboardingForm.age}
-                    onChange={(e) => setOnboardingForm(prev => ({ ...prev, age: e.target.value }))}
-                    className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                  />
-                </div>
-
-                {/* Height & Weight */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
-                      Height (cm) <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="number"
-                      required
-                      placeholder="e.g. 165"
-                      value={onboardingForm.height}
-                      onChange={(e) => setOnboardingForm(prev => ({ ...prev, height: e.target.value }))}
-                      className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
-                      Weight (kg) <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="number"
-                      required
-                      placeholder="e.g. 58"
-                      value={onboardingForm.weight}
-                      onChange={(e) => setOnboardingForm(prev => ({ ...prev, weight: e.target.value }))}
-                      className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                    />
+                  <div className="flex justify-end pt-2">
+                    <button
+                      onClick={() => setOnboardingStep(2)}
+                      className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold uppercase tracking-wider rounded-xl shadow-lg cursor-pointer flex items-center gap-2"
+                    >
+                      Begin Setup <ChevronRight className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
+              )}
 
-                {/* Phone Number */}
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
-                    Phone Number <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="tel"
-                    required
-                    placeholder="e.g. +91 94021 58210"
-                    value={onboardingForm.phoneNumber}
-                    onChange={(e) => setOnboardingForm(prev => ({ ...prev, phoneNumber: e.target.value }))}
-                    className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                  />
-                </div>
+              {/* STEP 2: PERSONAL DEMOGRAPHICS */}
+              {onboardingStep === 2 && (
+                <div className="space-y-4 animate-fade-in">
+                  <div className="space-y-1">
+                    <h3 className="text-lg font-black text-slate-900 dark:text-white">Personal Demographics</h3>
+                    <p className="text-xs text-slate-400">Please provide your core identifying metadata to register on the health grid.</p>
+                  </div>
 
-                <div className="flex gap-3 pt-4">
-                  <button
-                    type="button"
-                    onClick={() => setIsOnboardingActive(false)}
-                    className="w-1/3 py-3 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-slate-50 cursor-pointer text-center dark:bg-slate-950"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="w-2/3 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold uppercase tracking-widest rounded-xl shadow-lg cursor-pointer transition-all hover:-translate-y-0.5 active:translate-y-0 text-center"
-                  >
-                    Continue
-                  </button>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
+                        Full Legal Name <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={onboardingData.fullName}
+                        onChange={(e) => setOnboardingData(prev => ({ ...prev, fullName: e.target.value }))}
+                        placeholder="e.g. Supriya Kilari"
+                        className="w-full bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
+                          Date of Birth <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="date"
+                          required
+                          value={onboardingData.dob}
+                          onChange={(e) => setOnboardingData(prev => ({ ...prev, dob: e.target.value }))}
+                          className="w-full bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
+                          Gender <span className="text-red-500">*</span>
+                        </label>
+                        <select
+                          value={onboardingData.gender}
+                          onChange={(e) => setOnboardingData(prev => ({ ...prev, gender: e.target.value }))}
+                          className="w-full bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        >
+                          <option value="Female">Female</option>
+                          <option value="Male">Male</option>
+                          <option value="Other">Other</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
+                          Mobile Phone Number <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="tel"
+                          required
+                          placeholder="e.g. +91 94021 58210"
+                          value={onboardingData.phoneNumber}
+                          onChange={(e) => setOnboardingData(prev => ({ ...prev, phoneNumber: e.target.value }))}
+                          className="w-full bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
+                          Blood Group <span className="text-red-500">*</span>
+                        </label>
+                        <select
+                          value={onboardingData.bloodGroup}
+                          onChange={(e) => setOnboardingData(prev => ({ ...prev, bloodGroup: e.target.value }))}
+                          className="w-full bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        >
+                          <option value="A+">A+</option>
+                          <option value="A-">A-</option>
+                          <option value="B+">B+</option>
+                          <option value="B-">B-</option>
+                          <option value="O+">O+</option>
+                          <option value="O-">O-</option>
+                          <option value="AB+">AB+</option>
+                          <option value="AB-">AB-</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between pt-4 border-t border-slate-100 dark:border-slate-800">
+                    <button
+                      onClick={() => setOnboardingStep(1)}
+                      className="px-5 py-2.5 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800"
+                    >
+                      Back
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!onboardingData.fullName.trim() || !onboardingData.dob || !onboardingData.phoneNumber.trim()) {
+                          triggerToast("Please complete all required demographics fields.", true);
+                          return;
+                        }
+                        setOnboardingStep(3);
+                      }}
+                      className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold uppercase tracking-wider rounded-xl shadow-md cursor-pointer flex items-center gap-1.5"
+                    >
+                      Next Step <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-              </form>
+              )}
+
+              {/* STEP 3: MEDICAL INFORMATION */}
+              {onboardingStep === 3 && (
+                <div className="space-y-4 animate-fade-in">
+                  <div className="space-y-1">
+                    <h3 className="text-lg font-black text-slate-900 dark:text-white">Clinical & Medical Background</h3>
+                    <p className="text-xs text-slate-400 font-medium">Entering clinical metrics unlocks localized AI diagnostics and accurate dosage safety guards.</p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
+                          Height (cm)
+                        </label>
+                        <input
+                          type="number"
+                          placeholder="e.g. 165"
+                          value={onboardingData.height}
+                          onChange={(e) => setOnboardingData(prev => ({ ...prev, height: e.target.value }))}
+                          className="w-full bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
+                          Weight (kg)
+                        </label>
+                        <input
+                          type="number"
+                          placeholder="e.g. 58"
+                          value={onboardingData.weight}
+                          onChange={(e) => setOnboardingData(prev => ({ ...prev, weight: e.target.value }))}
+                          className="w-full bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
+                        Drug or Food Allergies
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Penicillin, Peanuts (or 'None')"
+                        value={onboardingData.allergies}
+                        onChange={(e) => setOnboardingData(prev => ({ ...prev, allergies: e.target.value }))}
+                        className="w-full bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
+                          Chronic Health Conditions
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Asthma, Thyroid"
+                          value={onboardingData.chronicConditions}
+                          onChange={(e) => setOnboardingData(prev => ({ ...prev, chronicConditions: e.target.value }))}
+                          className="w-full bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
+                          Current Active Medications
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Inhaler SOS, Insulin daily"
+                          value={onboardingData.currentMedications}
+                          onChange={(e) => setOnboardingData(prev => ({ ...prev, currentMedications: e.target.value }))}
+                          className="w-full bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between pt-4 border-t border-slate-100 dark:border-slate-800">
+                    <button
+                      onClick={() => setOnboardingStep(2)}
+                      className="px-5 py-2.5 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800"
+                    >
+                      Back
+                    </button>
+                    <button
+                      onClick={() => setOnboardingStep(4)}
+                      className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold uppercase tracking-wider rounded-xl shadow-md cursor-pointer flex items-center gap-1.5"
+                    >
+                      Next Step <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* STEP 4: HEALTHCARE PREFERENCES */}
+              {onboardingStep === 4 && (
+                <div className="space-y-4 animate-fade-in">
+                  <div className="space-y-1">
+                    <h3 className="text-lg font-black text-slate-900 dark:text-white">Care Preferences & Theme</h3>
+                    <p className="text-xs text-slate-400">Personalize notifications, default primary providers, and workspace styling.</p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
+                        Preferred Primary Care Hospital
+                      </label>
+                      <select
+                        value={onboardingData.preferredHospital}
+                        onChange={(e) => setOnboardingData(prev => ({ ...prev, preferredHospital: e.target.value }))}
+                        className="w-full bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      >
+                        <option value="AIMS Super Speciality Hospital">AIMS Super Speciality Hospital, New Delhi</option>
+                        <option value="St. Mary's General Hospital">St. Mary's General Hospital, Hyderabad</option>
+                        <option value="Aarogyasri Central Hospital">Aarogyasri Central Hospital, Bangalore</option>
+                        <option value="Fortis Healthcare">Fortis Healthcare, Mumbai</option>
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                      <div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-2">Notification Guards</span>
+                        <div className="space-y-2">
+                          <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300">
+                            <input 
+                              type="checkbox" 
+                              checked={onboardingData.notificationPrefEmail} 
+                              onChange={(e) => setOnboardingData(prev => ({ ...prev, notificationPrefEmail: e.target.checked }))}
+                              className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                            />
+                            Email Alerts (Clinical)
+                          </label>
+                          <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300">
+                            <input 
+                              type="checkbox" 
+                              checked={onboardingData.notificationPrefSms} 
+                              onChange={(e) => setOnboardingData(prev => ({ ...prev, notificationPrefSms: e.target.checked }))}
+                              className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                            />
+                            SMS Emergency Ping
+                          </label>
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-2">Theme Preset</span>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setOnboardingData(prev => ({ ...prev, themePreference: "Light" }))}
+                            className={`p-2 rounded-xl text-xs font-bold border text-center transition-all ${onboardingData.themePreference === "Light" ? "bg-emerald-50 border-emerald-500 text-emerald-700" : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-transparent"}`}
+                          >
+                            Light
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setOnboardingData(prev => ({ ...prev, themePreference: "Dark" }))}
+                            className={`p-2 rounded-xl text-xs font-bold border text-center transition-all ${onboardingData.themePreference === "Dark" ? "bg-emerald-950 border-emerald-500 text-emerald-400" : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-transparent"}`}
+                          >
+                            Dark
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between pt-4 border-t border-slate-100 dark:border-slate-800">
+                    <button
+                      onClick={() => setOnboardingStep(3)}
+                      className="px-5 py-2.5 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800"
+                    >
+                      Back
+                    </button>
+                    <button
+                      onClick={() => setOnboardingStep(5)}
+                      className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold uppercase tracking-wider rounded-xl shadow-md cursor-pointer flex items-center gap-1.5"
+                    >
+                      Verify Details <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* STEP 5: ONBOARDING COMPLETION & REVIEW */}
+              {onboardingStep === 5 && (
+                <div className="space-y-5 animate-fade-in">
+                  <div className="space-y-1.5 text-center">
+                    <div className="mx-auto w-12 h-12 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-inner">
+                      <CheckCircle className="w-7 h-7" />
+                    </div>
+                    <h3 className="text-xl font-black text-slate-900 dark:text-white">Profile Registration Verified</h3>
+                    <p className="text-xs text-slate-400">Everything is locked and sealed. Please confirm your primary clinical credentials:</p>
+                  </div>
+
+                  <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800 text-xs space-y-2 font-medium">
+                    <div className="flex justify-between border-b border-slate-200/40 dark:border-slate-700/30 pb-1.5">
+                      <span className="text-slate-400">Patient Custodian Name:</span>
+                      <span className="font-bold text-slate-800 dark:text-white">{onboardingData.fullName}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-slate-200/40 dark:border-slate-700/30 pb-1.5">
+                      <span className="text-slate-400">Gender / Blood Group:</span>
+                      <span className="font-bold text-slate-800 dark:text-white">{onboardingData.gender} ({onboardingData.bloodGroup})</span>
+                    </div>
+                    <div className="flex justify-between border-b border-slate-200/40 dark:border-slate-700/30 pb-1.5">
+                      <span className="text-slate-400">Active Mobile Number:</span>
+                      <span className="font-bold text-slate-800 dark:text-white font-mono">{onboardingData.phoneNumber}</span>
+                    </div>
+                    <div className="flex justify-between pb-0.5">
+                      <span className="text-slate-400">Primary Health Gateway:</span>
+                      <span className="font-bold text-emerald-600 dark:text-emerald-400">{onboardingData.preferredHospital}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between pt-4 border-t border-slate-100 dark:border-slate-800">
+                    <button
+                      onClick={() => setOnboardingStep(4)}
+                      className="px-5 py-2.5 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800"
+                    >
+                      Back
+                    </button>
+                    <button
+                      onClick={() => handleOnboardingSubmit()}
+                      disabled={loading}
+                      className="px-8 py-3 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white text-xs font-black uppercase tracking-widest rounded-xl shadow-lg cursor-pointer flex items-center gap-1.5"
+                    >
+                      {loading ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>Establishing Profile...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>Establish Health Record</span>
+                          <Check className="w-4 h-4" />
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 shadow-2xl text-center space-y-6">
@@ -1859,9 +2229,17 @@ export default function App() {
 
                 <button
                   type="submit"
-                  className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white text-xs font-extrabold uppercase tracking-widest rounded-xl shadow-lg cursor-pointer transition-all hover:-translate-y-0.5 active:translate-y-0"
+                  disabled={loading}
+                  className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white text-xs font-extrabold uppercase tracking-widest rounded-xl shadow-lg cursor-pointer transition-all flex items-center justify-center gap-2"
                 >
-                  Sign In Securely
+                  {loading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Authenticating...</span>
+                    </>
+                  ) : (
+                    <span>Sign In Securely</span>
+                  )}
                 </button>
               </form>
 
@@ -1877,7 +2255,7 @@ export default function App() {
                 type="button"
                 disabled={googleAuthLoading}
                 onClick={handleGoogleSignIn}
-                className="w-full py-3 bg-white dark:bg-slate-900 hover:bg-slate-50 text-slate-700 dark:text-slate-300 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm cursor-pointer transition-all flex items-center justify-center gap-2 hover:-translate-y-0.5 active:translate-y-0"
+                className="w-full py-3 bg-white dark:bg-slate-900 hover:bg-slate-50 text-slate-700 dark:text-slate-300 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm cursor-pointer transition-all flex items-center justify-center gap-2"
               >
                 {googleAuthLoading ? (
                   <>
@@ -1909,61 +2287,7 @@ export default function App() {
                 )}
               </button>
 
-              <div className="relative flex py-1 items-center">
-                <div className="flex-grow border-t border-slate-200 dark:border-slate-800"></div>
-                <span className="flex-shrink mx-4 text-[9px] text-slate-400 font-bold uppercase tracking-widest">
-                  Demo Quick Access
-                </span>
-                <div className="flex-grow border-t border-slate-200 dark:border-slate-800"></div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <button
-                  onClick={() => {
-                    setLoginEmailInput("supriya@gmail.com");
-                    triggerToast("Selected Supriya Kilari (Patient Demo)");
-                  }}
-                  className="p-2.5 bg-slate-50 hover:bg-emerald-50 dark:bg-slate-800/50 dark:hover:bg-emerald-950/30 border border-slate-200 dark:border-slate-800 rounded-xl text-left cursor-pointer transition-all flex flex-col justify-between"
-                >
-                  <span className="text-[10px] font-black text-slate-800 dark:text-slate-100 block">Supriya Kilari</span>
-                  <span className="text-[9px] text-slate-400 font-mono">supriya@gmail.com</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setLoginEmailInput("father@gmail.com");
-                    triggerToast("Selected Rami Kilari (Father Demo)");
-                  }}
-                  className="p-2.5 bg-slate-50 hover:bg-emerald-50 dark:bg-slate-800/50 dark:hover:bg-emerald-950/30 border border-slate-200 dark:border-slate-800 rounded-xl text-left cursor-pointer transition-all flex flex-col justify-between"
-                >
-                  <span className="text-[10px] font-black text-slate-800 dark:text-slate-100 block">Rami Kilari</span>
-                  <span className="text-[9px] text-slate-400 font-mono font-bold text-amber-600">father@gmail.com</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setLoginEmailInput("mother@gmail.com");
-                    triggerToast("Selected Lakshmi Kilari (Mother Demo)");
-                  }}
-                  className="p-2.5 bg-slate-50 hover:bg-emerald-50 dark:bg-slate-800/50 dark:hover:bg-emerald-950/30 border border-slate-200 dark:border-slate-800 rounded-xl text-left cursor-pointer transition-all flex flex-col justify-between"
-                >
-                  <span className="text-[10px] font-black text-slate-800 dark:text-slate-100 block">Lakshmi Kilari</span>
-                  <span className="text-[9px] text-slate-400 font-mono font-bold text-teal-600">mother@gmail.com</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setLoginEmailInput("doctor@healthtribe.com");
-                    triggerToast("Selected Dr. Arjun Patel (Doctor Demo)");
-                  }}
-                  className="p-2.5 bg-slate-50 hover:bg-emerald-50 dark:bg-slate-800/50 dark:hover:bg-emerald-950/30 border border-slate-200 dark:border-slate-800 rounded-xl text-left cursor-pointer transition-all flex flex-col justify-between"
-                >
-                  <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-400 block font-bold">Dr. Arjun Patel</span>
-                  <span className="text-[9px] text-emerald-500 font-mono font-bold">doctor@healthtribe.com</span>
-                </button>
-              </div>
-
-              <p className="text-[9px] text-slate-400 font-medium">
+              <p className="text-[9px] text-slate-400 font-medium pt-2">
                 🔒 Fully encrypted session secured by India National Digital Health Gateway
               </p>
             </div>
@@ -5694,6 +6018,123 @@ export default function App() {
           onSelect={(addr) => { setSelectedAddress(addr); setIsAddressModalOpen(false); }}
           onClose={() => setIsAddressModalOpen(false)}
         />
+      )}
+
+      {showGoogleChooser && (
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="relative w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl p-8 space-y-6 animate-scale-in text-slate-800 dark:text-slate-100">
+            {/* Google Brand Header */}
+            <div className="flex flex-col items-center text-center space-y-2">
+              <svg className="w-10 h-10 mb-1" viewBox="0 0 24 24">
+                <path
+                  fill="#4285F4"
+                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                />
+              </svg>
+              <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">Choose an account</h3>
+              <p className="text-xs text-slate-400">to continue to <span className="font-bold text-emerald-600">HealthTribe AI</span></p>
+            </div>
+
+            {/* Account List */}
+            <div className="space-y-3 font-medium">
+              {/* Account 1: Patient */}
+              <button
+                onClick={() => selectGoogleAccount("kilarisupriya25@gmail.com", "Supriya Kilari")}
+                className="w-full p-4 hover:bg-slate-50 dark:hover:bg-slate-800/60 border border-slate-100 dark:border-slate-800 rounded-2xl flex items-center justify-between text-left cursor-pointer transition-all"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 font-bold rounded-full flex items-center justify-center shrink-0">
+                    S
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-slate-800 dark:text-slate-100">Supriya Kilari</h4>
+                    <p className="text-[10px] text-slate-400 font-mono">kilarisupriya25@gmail.com</p>
+                  </div>
+                </div>
+                <span className="text-[9px] bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">Patient</span>
+              </button>
+
+              {/* Account 2: Doctor */}
+              <button
+                onClick={() => selectGoogleAccount("doctor@healthtribe.com", "Dr. Arjun Patel")}
+                className="w-full p-4 hover:bg-slate-50 dark:hover:bg-slate-800/60 border border-slate-100 dark:border-slate-800 rounded-2xl flex items-center justify-between text-left cursor-pointer transition-all"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 font-bold rounded-full flex items-center justify-center shrink-0">
+                    A
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-slate-800 dark:text-slate-100">Dr. Arjun Patel</h4>
+                    <p className="text-[10px] text-slate-400 font-mono">doctor@healthtribe.com</p>
+                  </div>
+                </div>
+                <span className="text-[9px] bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">Doctor</span>
+              </button>
+
+              {/* Custom email toggle or input */}
+              {!showCustomEmailInput ? (
+                <button
+                  onClick={() => setShowCustomEmailInput(true)}
+                  className="w-full p-3.5 border border-dashed border-slate-200 dark:border-slate-800 hover:border-slate-300 rounded-2xl text-xs font-extrabold text-slate-500 hover:text-slate-800 dark:hover:text-white transition-all text-center cursor-pointer"
+                >
+                  ➕ Use another Google Account
+                </button>
+              ) : (
+                <div className="space-y-3 p-4 bg-slate-50 dark:bg-slate-800/30 border border-slate-100 dark:border-slate-800 rounded-2xl animate-fade-in">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Enter Google Account Email</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="email"
+                      placeholder="username@gmail.com"
+                      value={googleChooserCustomEmail}
+                      onChange={(e) => setGoogleChooserCustomEmail(e.target.value)}
+                      className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs focus:outline-none"
+                    />
+                    <button
+                      onClick={() => {
+                        if (!googleChooserCustomEmail || !googleChooserCustomEmail.includes("@")) {
+                          triggerToast("Please enter a valid Google Account email.", true);
+                          return;
+                        }
+                        const derivedName = googleChooserCustomEmail.split("@")[0];
+                        const capitalizedName = derivedName.charAt(0).toUpperCase() + derivedName.slice(1);
+                        selectGoogleAccount(googleChooserCustomEmail, capitalizedName);
+                      }}
+                      className="px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl cursor-pointer"
+                    >
+                      Verify
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                onClick={() => {
+                  setShowGoogleChooser(false);
+                  setShowCustomEmailInput(false);
+                  setGoogleChooserCustomEmail("");
+                }}
+                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-extrabold text-xs rounded-xl cursor-pointer transition-all"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>
